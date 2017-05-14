@@ -1,0 +1,21 @@
+# Tomcat service config file
+
+INSTANCE_ROOT="sisl_tomcat_instance_path"
+
+CATALINA_BASE="${INSTANCE_ROOT}"
+
+CATALINA_HOME="catalina_home"
+
+JAVA_HOME="java_home"
+
+CATALINA_TMPDIR="${INSTANCE_ROOT}/temp"
+
+TC_EXEC_USER="sisl_tomcat_instance_user"
+
+TC_EXEC_GROUP="sisl_tomcat_instance_group"
+
+JAVA_OPTS="${JAVA_OPTS} -server -Xms512m -Xmx512m -Djava.awt.headless=true -verbose:gc  -XX:+PrintGCTimeStamps -XX:+PrintGCDetails -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=5400 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=${INSTANCE_ROOT}/temp"
+
+CATALINA_PID="${INSTANCE_ROOT}/temp/tomcat.pid"
+
+export INSTANCE_ROOT CATALINA_BASE CATALINA_HOME CATALINA_TMPDIR TC_EXEC_USER TC_EXEC_GROUP JAVA_OPTS CATALINA_PID JAVA_HOME

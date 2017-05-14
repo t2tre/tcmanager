@@ -1,0 +1,184 @@
+#!/bin/bash
+
+BIN_AWK=/bin/awk
+BIN_CAT=/bin/cat
+BIN_CP=/bin/cp
+BIN_CHMOD=/bin/chmod
+BIN_CHOWN=/bin/chown
+BIN_CUT=/bin/cut
+BIN_DATE=/bin/date
+BIN_EGREP=/bin/egrep
+BIN_FIND=/bin/find
+BIN_GZIP=/bin/gzip
+BIN_ID=/usr/bin/id
+BIN_LOGGER=/usr/bin/logger
+BIN_MKDIR=/bin/mkdir
+BIN_MV=/bin/mv
+BIN_RM=/bin/rm
+BIN_RSYNC=/usr/bin/rsync
+BIN_SED=/bin/sed
+BIN_SSH=/usr/bin/ssh
+BIN_SU=/bin/su
+BIN_TOUCH=/bin/touch
+BIN_WC=/usr/bin/wc
+
+SBIN_CHKCONFIG=/sbin/chkconfig
+
+EXEC_USER=root
+
+LOG_FACILITY=local0
+
+TEMPLATE_ROOT=/opt/sisl/share/mk-tomcat-instance
+
+# Log event, and exit if the code is non-zero.
+function handleEvent
+{
+   if [ ${1} -eq 0 ]; then
+      ${BIN_LOGGER} -i -t ${3} -p ${LOG_FACILITY}.info "Exec code: ${1} [OK] (msg=${2})"
+   else
+      ${BIN_LOGGER} -i -t ${3} -p ${LOG_FACILITY}.error "Exec code: ${1} [ERR] (${2})"
+      exit ${1}
+   fi
+}
+
+function displayHelp() {
+   echo "Usage: ${0} -p /path -n instancename -u user -g group"
+}
+
+# Check that we're executing as the correct user.
+exec_code=0
+${BIN_LOGGER} -i -t ${0} -p ${LOG_FACILITY}.info "Check current user"
+#if [ "${USER}" != "${EXEC_USER}" ]; then
+if [ "${UID}" != "0" ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "This script must be run as the ${EXEC_USER} user. The user found is ${USER}/${UID}"
+   exec_code=3
+fi
+handleEvent ${exec_code} "Check current user" ${0}
+
+# Parse command line arguments, and check environment
+INSTANCE_ROOT=
+TC_EXEC_USER=
+TC_EXEC_GROUP=
+DISPLAY_HELP=
+INSTANCE_NAME=
+
+while getopts "p:n:u:g:h" OPTION; do
+    case ${OPTION} in
+        p)
+            INSTANCE_ROOT=${OPTARG}
+            ;;
+        n)
+            INSTANCE_NAME=${OPTARG}
+            ;;
+        u)
+            TC_EXEC_USER=${OPTARG}
+            ;;
+        g)
+            TC_EXEC_GROUP=${OPTARG}
+            ;;
+        h)
+            DISPLAY_HELP=1
+            ;;
+        ?)
+            ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "Unknown option"
+            exec_code=4
+            handleEvent ${exec_code} "Check command line options" ${0}
+            ;;
+    esac
+done
+
+if [ "${DISPLAY_HELP}" = "1" ]; then
+   displayHelp
+   exit 0
+fi
+
+if [ -z "${INSTANCE_ROOT}" ] || [ -z "${TC_EXEC_USER}" ] || [ -z "${TC_EXEC_GROUP}" ] || [ -z "${INSTANCE_NAME}" ]; then
+    ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "Missing command line option(s)"
+    exec_code=4
+    displayHelp
+    handleEvent ${exec_code} "Check command line options" ${0}
+fi
+
+if [ "${TC_EXEC_USER}" = "root" ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "Tomcat instance is not permitted to execute as ${TC_EXEC_USER}"
+   exec_code=4
+   displayHelp
+   handleEvent ${exec_code} "Check command line options" ${0}
+fi
+
+user_exists=`${BIN_CAT} /etc/passwd | ${BIN_CUT} -f 1 -d : | ${BIN_EGREP} "^${TC_EXEC_USER}$" | ${BIN_WC} -l`
+if [ ${user_exists} -lt 1 ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "Specified username (${TC_EXEC_USER}) does not exist"
+   exec_code=4
+   displayHelp
+   handleEvent ${exec_code} "Check command line options" ${0}
+fi
+
+if [ -z "${CATALINA_HOME}" ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "The CATALINA_HOME environment variable does not exist. Is Tomcat installed?"
+   exec_code=5
+   handleEvent ${exec_code} "Environment error (unable to locate Tomcat installation)" ${0}
+fi
+
+if [ -z "${JAVA_HOME}" ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "The JAVA_HOME environment variable does not exist. Is the JDK installed?"
+   exec_code=5
+   handleEvent ${exec_code} "Environment error (unable to locate JDK home)" ${0}
+fi
+
+if [ ! -e ${JAVA_HOME}/bin/java ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "Unable to locate the java command. Is the JDK installed?"
+   exec_code=5
+   handleEvent ${exec_code} "Environment error (unable to locate java command)" ${0}
+fi
+
+template_file_list="${TEMPLATE_ROOT}/sisl-tc-instance.conf.TEMPLATE ${TEMPLATE_ROOT}/start.TEMPLATE ${TEMPLATE_ROOT}/stop.TEMPLATE"
+for tcf in ${template_file_list}; do
+   if [ ! -f "${tcf}" ]; then
+      ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "Missing template files (${tcf})"
+      exec_code=4
+      handleEvent ${exec_code} "Check template files" ${0}
+   fi
+done
+
+folder_group_no_move="logs temp server webapps work"
+folder_group_move="conf bin common shared shared/lib common/lib"
+${BIN_MKDIR} -p ${INSTANCE_ROOT}
+cd ${INSTANCE_ROOT}
+
+for folder in ${folder_group_no_move}; do
+   if [ -d ${folder} ]; then
+      ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.warn "[WARN]: Folder  ${INSTANCE_ROOT}/${folder} exists. Skipping..."
+   else
+      ${BIN_MKDIR} -p ${folder}
+   fi
+done
+
+for folder in ${folder_group_move}; do
+   if [ -d ${folder} ]; then
+      ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.warn "[WARN]: Folder  ${INSTANCE_ROOT}/${folder} exists. Moving..."
+      ${BIN_MKDIR} -p moved.$$
+      ${BIN_MV} ${folder} moved.$$/.
+      ${BIN_MKDIR} -p ${folder}
+   else
+      ${BIN_MKDIR} -p ${folder}
+   fi
+done
+
+${BIN_CAT} ${TEMPLATE_ROOT}/sisl-tc-instance.conf.TEMPLATE | ${BIN_SED} -e "s#sisl_tomcat_instance_path#${INSTANCE_ROOT}#g"|sed -e "s#sisl_tomcat_instance_user#${TC_EXEC_USER}#g" | sed -e "s#sisl_tomcat_instance_group#${TC_EXEC_GROUP}#g" | ${BIN_SED} -e "s#sisl_tomcat_instance_name#${INSTANCE_NAME}#g" | ${BIN_SED} -e "s#catalina_home#${CATALINA_HOME}#g" | ${BIN_SED} -e "s#java_home#${JAVA_HOME}#g" > ${INSTANCE_ROOT}/conf/sisl-tc-instance.conf
+
+${BIN_CAT} ${TEMPLATE_ROOT}/start.TEMPLATE | ${BIN_SED} -e "s#sisl_tomcat_instance_path#${INSTANCE_ROOT}#g"|sed -e "s#sisl_tomcat_instance_user#${TC_EXEC_USER}#g" | sed -e "s#sisl_tomcat_instance_group#${TC_EXEC_GROUP}#g" > ${INSTANCE_ROOT}/bin/start
+
+${BIN_CAT} ${TEMPLATE_ROOT}/stop.TEMPLATE | ${BIN_SED} -e "s#sisl_tomcat_instance_path#${INSTANCE_ROOT}#g"|sed -e "s#sisl_tomcat_instance_user#${TC_EXEC_USER}#g" | sed -e "s#sisl_tomcat_instance_group#${TC_EXEC_GROUP}#g" > ${INSTANCE_ROOT}/bin/stop
+
+${BIN_CAT} ${TEMPLATE_ROOT}/tcinit.TEMPLATE | ${BIN_SED} -e "s#sisl_tomcat_instance_path#${INSTANCE_ROOT}#g"|sed -e "s#sisl_tomcat_instance_user#${TC_EXEC_USER}#g" | sed -e "s#sisl_tomcat_instance_group#${TC_EXEC_GROUP}#g" | ${BIN_SED} -e "s#sisl_tomcat_instance_name#${INSTANCE_NAME}#g" > ${INSTANCE_ROOT}/bin/tcinit_${INSTANCE_NAME}
+
+${BIN_CP} ${CATALINA_HOME}/conf/* ${INSTANCE_ROOT}/conf/.
+${BIN_CHMOD} 640 ${INSTANCE_ROOT}/conf/*
+${BIN_CHMOD} 750 ${INSTANCE_ROOT}/bin/*
+${BIN_CP} ${INSTANCE_ROOT}/bin/tcinit_${INSTANCE_NAME} /etc/init.d/.
+${BIN_CHOWN} -R ${TC_EXEC_USER}:${TC_EXEC_GROUP} ${INSTANCE_ROOT}
+${SBIN_CHKCONFIG} --add tcinit_${INSTANCE_NAME}
+${SBIN_CHKCONFIG} tcinit_${INSTANCE_NAME} on
+
+echo "Tomcat service  tcinit_${INSTANCE_NAME} has been created. Use /sbin/service [start|stop]  tcinit_${INSTANCE_NAME} to start/stop as appropriate"

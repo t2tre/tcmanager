@@ -1,0 +1,85 @@
+#!/bin/bash
+
+BIN_AWK=/bin/awk
+BIN_CAT=/bin/cat
+BIN_CP=/bin/cp
+BIN_CHMOD=/bin/chmod
+BIN_CHOWN=/bin/chown
+BIN_CUT=/bin/cut
+BIN_DATE=/bin/date
+BIN_EGREP=/bin/egrep
+BIN_FIND=/bin/find
+BIN_GZIP=/bin/gzip
+BIN_ID=/usr/bin/id
+BIN_LOGGER=/usr/bin/logger
+BIN_MKDIR=/bin/mkdir
+BIN_MV=/bin/mv
+BIN_RM=/bin/rm
+BIN_RSYNC=/usr/bin/rsync
+BIN_SED=/bin/sed
+BIN_SSH=/usr/bin/ssh
+BIN_SU=/bin/su
+BIN_TOUCH=/bin/touch
+BIN_WC=/usr/bin/wc
+
+EXEC_USER=root
+
+LOG_FACILITY=local0
+
+INSTANCE_ROOT="sisl_tomcat_instance_path"
+
+# Log event, and exit if the code is non-zero.
+function handleEvent
+{
+   if [ ${1} -eq 0 ]; then
+      ${BIN_LOGGER} -i -t ${3} -p ${LOG_FACILITY}.info "Exec code: ${1} [OK] (msg=${2})"
+   else
+      ${BIN_LOGGER} -i -t ${3} -p ${LOG_FACILITY}.error "Exec code: ${1} [ERR] (${2})"
+      exit ${1}
+   fi
+}
+
+# Check that we're executing as the correct user.
+exec_code=0
+${BIN_LOGGER} -i -t ${0} -p ${LOG_FACILITY}.info "Check current user"
+USER=`id -un`
+if [ "${USER}" != "${EXEC_USER}" ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "This script must be run as the ${EXEC_USER} user"
+   exec_code=3
+fi
+handleEvent ${exec_code} "Check current user" ${0}
+
+if [ -f ${INSTANCE_ROOT}/conf/sisl-tc-instance.conf ]; then
+   . ${INSTANCE_ROOT}/conf/sisl-tc-instance.conf
+else
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "Instance configuration file missing"
+   exec_code=3
+   handleEvent ${exec_code} "Check configuration file" ${0}
+fi
+
+if [ -z "${CATALINA_HOME}" ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "The CATALINA_HOME environment variable does not exist. Is Tomcat installed?"
+   exec_code=5
+   handleEvent ${exec_code} "Environment error (unable to locate Tomcat installation)" ${0}
+fi
+
+if [ -z "${JAVA_HOME}" ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "The JAVA_HOME environment variable does not exist. Is the JDK installed?"
+   exec_code=5
+   handleEvent ${exec_code} "Environment error (unable to locate JDK home)" ${0}
+fi
+
+if [ ! -e ${JAVA_HOME}/bin/java ]; then
+   ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "Unable to locate the java command. Is the JDK installed?"
+   exec_code=5
+   handleEvent ${exec_code} "Environment error (unable to locate java command)" ${0}
+fi
+
+if [ -z "${INSTANCE_ROOT}" ] || [ -z "${TC_EXEC_USER}" ] || [ -z "${TC_EXEC_GROUP}" ]; then
+    ${BIN_LOGGER} -i -s -t ${0} -p ${LOG_FACILITY}.error "Settings missing in configuration file."
+    exec_code=4
+    handleEvent ${exec_code} "Check configuration file" ${0}
+fi
+
+${BIN_SU} -p ${TC_EXEC_USER} -c "${CATALINA_HOME}/bin/catalina.sh start"
+
